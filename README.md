@@ -22,6 +22,12 @@ From GitHub:
 herdr plugin install jeffmadrid/herdr-celebrate
 ```
 
+Pin a released version:
+
+```
+herdr plugin install jeffmadrid/herdr-celebrate --ref v0.1.0
+```
+
 From a local checkout (development):
 
 ```
