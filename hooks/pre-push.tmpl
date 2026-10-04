@@ -1,0 +1,99 @@
+#!/bin/sh
+# herdr-celebrate hook v1 — managed file, do not edit.
+# Installed by the jmd.celebrate herdr plugin.
+# Remove with: herdr plugin action invoke jmd.celebrate.uninstall-hooks
+HC_PLUGIN_ROOT='@PLUGIN_ROOT@'
+HC_STATE_DIR='@STATE_DIR@'
+HC_CONFIG_DIR='@CONFIG_DIR@'
+HC_TARGET_DIR='@TARGET_DIR@'
+HC_NODE_BIN='@NODE_BIN@'
+
+hc_log() {
+  printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$*" >>"$HC_STATE_DIR/celebrate.log" 2>/dev/null
+}
+
+mkdir -p "$HC_STATE_DIR" 2>/dev/null
+
+hc_stdin="${TMPDIR:-/tmp}/herdr-celebrate-stdin.$$"
+cat >"$hc_stdin" 2>/dev/null
+
+hc_status=0
+
+# 1. chain a previously installed global hook (moved aside by setup.mjs)
+if [ -x "$HC_TARGET_DIR/pre-push.herdr-prev" ]; then
+  "$HC_TARGET_DIR/pre-push.herdr-prev" "$@" <"$hc_stdin" || hc_status=$?
+fi
+
+# 2. chain the repository's own hook, which core.hooksPath shadows
+if [ "$hc_status" -eq 0 ]; then
+  hc_git_dir=$(git rev-parse --git-dir 2>/dev/null)
+  case "$hc_git_dir" in
+    "") ;;
+    /*) ;;
+    *) hc_git_dir="$PWD/$hc_git_dir" ;;
+  esac
+  if [ -n "$hc_git_dir" ] && [ -x "$hc_git_dir/hooks/pre-push" ]; then
+    hc_target_real=$(cd "$HC_TARGET_DIR" 2>/dev/null && pwd -P)
+    hc_prev_real=$(cd "$hc_git_dir/hooks" 2>/dev/null && pwd -P)
+    if [ "$hc_prev_real/pre-push" != "$hc_target_real/pre-push" ]; then
+      "$hc_git_dir/hooks/pre-push" "$@" <"$hc_stdin" || hc_status=$?
+    fi
+  fi
+fi
+
+if [ "$hc_status" -ne 0 ]; then
+  rm -f "$hc_stdin" 2>/dev/null
+  exit "$hc_status"
+fi
+
+# 3. record push intent and detach the watcher; never block the push
+hc_inflight="$HC_STATE_DIR/inflight.$$.txt"
+hc_cwd=$PWD
+hc_remote="$1"
+hc_url="$2"
+
+# find the actual git process (walk up if the hook was invoked through a wrapper)
+hc_git_pid=$PPID
+hc_depth=0
+while [ "$hc_depth" -lt 6 ]; do
+  hc_cmd=$(ps -o command= -p "$hc_git_pid" 2>/dev/null)
+  case "$hc_cmd" in
+    *git*) break ;;
+  esac
+  hc_next=$(ps -o ppid= -p "$hc_git_pid" 2>/dev/null | tr -d ' ')
+  if [ -z "$hc_next" ] || [ "$hc_next" -le 1 ] 2>/dev/null; then
+    break
+  fi
+  hc_git_pid="$hc_next"
+  hc_depth=$((hc_depth + 1))
+done
+
+{
+  printf 'META\tgit_pid=%s\n' "$hc_git_pid"
+  printf 'META\tcwd=%s\n' "$hc_cwd"
+  printf 'META\tremote=%s\n' "$hc_remote"
+  printf 'META\turl=%s\n' "$hc_url"
+  while IFS=' ' read -r hc_lref hc_lsha hc_rref hc_rsha; do
+    [ -n "$hc_lref" ] || continue
+    hc_branch=${hc_rref#refs/heads/}
+    hc_tracking="refs/remotes/$hc_remote/$hc_branch"
+    hc_before=$(git rev-parse --verify --quiet "$hc_tracking" 2>/dev/null)
+    printf 'REF\t%s\t%s\t%s\t%s\t%s\n' "$hc_lref" "$hc_lsha" "$hc_rref" "$hc_rsha" "$hc_before"
+  done <"$hc_stdin"
+} >"$hc_inflight" 2>/dev/null
+
+rm -f "$hc_stdin" 2>/dev/null
+
+hc_node="$HC_NODE_BIN"
+if [ ! -x "$hc_node" ]; then
+  hc_node=$(command -v node 2>/dev/null)
+fi
+if [ -n "$hc_node" ] && [ -f "$HC_PLUGIN_ROOT/watcher.mjs" ]; then
+  HERDR_PLUGIN_STATE_DIR="$HC_STATE_DIR" HERDR_PLUGIN_CONFIG_DIR="$HC_CONFIG_DIR" \
+    nohup "$hc_node" "$HC_PLUGIN_ROOT/watcher.mjs" "$hc_inflight" >>"$HC_STATE_DIR/celebrate.log" 2>&1 &
+else
+  rm -f "$hc_inflight" 2>/dev/null
+  hc_log "watcher not started: node='$hc_node' plugin='$HC_PLUGIN_ROOT'"
+fi
+
+exit 0

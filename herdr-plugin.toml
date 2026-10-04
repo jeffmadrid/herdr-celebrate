@@ -1,0 +1,34 @@
+id = "jeffmadrid.celebrate"
+name = "Celebrate"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Confetti and fireworks when a git push succeeds — in any repo, any terminal."
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "install-hooks"
+title = "Enable push celebrations"
+command = ["node", "setup.mjs", "install"]
+
+[[actions]]
+id = "uninstall-hooks"
+title = "Disable push celebrations"
+command = ["node", "setup.mjs", "uninstall"]
+
+[[actions]]
+id = "status"
+title = "Show celebration status"
+command = ["node", "setup.mjs", "status"]
+
+[[actions]]
+id = "test"
+title = "Celebrate now (test effect)"
+command = ["node", "test.mjs"]
+
+[[panes]]
+id = "celebrate"
+title = "PUSHED!"
+placement = "popup"
+width = "100%"
+height = "100%"
+command = ["node", "celebrate.mjs"]
